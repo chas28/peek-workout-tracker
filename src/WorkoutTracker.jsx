@@ -277,6 +277,7 @@ export default function WorkoutTracker() {
           await syncRestDays(localRestDays, []);
         }
       } catch (e) {
+        console.error("Cloud pull/reconcile failed:", e);
         setSaveError("Couldn't reach the cloud. Working from your local data only.");
       } finally {
         if (!cancelled) setCloudReady(true);
@@ -315,7 +316,8 @@ export default function WorkoutTracker() {
 
   useEffect(() => {
     if (!cloudReady) return; // avoid pushing defaults up before the initial cloud pull resolves
-    syncSettings({ theme, timeFormat, weightUnit }).catch(() => {
+    syncSettings({ theme, timeFormat, weightUnit }).catch((e) => {
+      console.error("Settings cloud sync failed:", e);
       setSaveError("Saved locally, but couldn't sync settings to the cloud.");
     });
   }, [theme, timeFormat, weightUnit, cloudReady]);
@@ -361,7 +363,8 @@ export default function WorkoutTracker() {
     } catch (e) {
       setSaveError("Couldn't save. Your data may not persist.");
     }
-    syncWorkouts(next, previous).catch(() => {
+    syncWorkouts(next, previous).catch((e) => {
+      console.error("Workouts cloud sync failed:", e);
       setSaveError("Saved locally, but couldn't sync to the cloud.");
     });
   }
@@ -374,7 +377,8 @@ export default function WorkoutTracker() {
     } catch (e) {
       // ignore
     }
-    syncRestDays(next, previous).catch(() => {
+    syncRestDays(next, previous).catch((e) => {
+      console.error("Rest days cloud sync failed:", e);
       setSaveError("Saved locally, but couldn't sync to the cloud.");
     });
   }
