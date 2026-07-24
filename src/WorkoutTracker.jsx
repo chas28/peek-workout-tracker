@@ -3,6 +3,8 @@ import { Plus, Trash2, ChevronLeft, ChevronRight, Dumbbell, History, Trophy, Che
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { calculateE1RM, getE1RMTrend, getE1RMPerSet, FORMULAS } from "./e1rm.js";
 import { pullCloudState, syncWorkouts, syncRestDays, syncSettings } from "./cloudSync.js";
+import exerciseLibraryData from "./exerciseLibrary.json";
+import { fuzzySearch } from "./fuzzySearch.js";
 
 const STORAGE_KEY = "workouts";
 const THEME_KEY = "theme";
@@ -17,35 +19,14 @@ const SPLITS = [
   { name: "Upper/Lower", days: ["Upper Body", "Lower Body"] },
 ];
 
-const EXERCISE_LIBRARY = [
-  "Bench Press",
-  "Incline Bench Press",
-  "Barbell Squat",
-  "Front Squat",
-  "Deadlift",
-  "Romanian Deadlift",
-  "Shoulder Press",
-  "Overhead Press",
-  "Bent-Over Row",
-  "Lat Pulldown",
-  "Pull-Up",
-  "Chin-Up",
-  "Bicep Curl",
-  "Hammer Curl",
-  "Tricep Extension",
-  "Tricep Pushdown",
-  "Leg Press",
-  "Leg Curl",
-  "Leg Extension",
-  "Calf Raise",
-  "Lateral Raise",
-  "Face Pull",
-  "Dip",
-  "Push-Up",
-  "Plank",
-  "Hip Thrust",
-  "Lunge",
-].sort((a, b) => a.localeCompare(b));
+// Sourced from exerciseLibrary.json (name + category per entry). The
+// strength "Add from Library" picker only ever needs names, and excludes
+// the Cardio category — cardio sessions use their own CARDIO_TYPES flow
+// below, not this picker.
+const EXERCISE_LIBRARY = exerciseLibraryData
+  .filter(e => e.category !== "Cardio")
+  .map(e => e.name)
+  .sort((a, b) => a.localeCompare(b));
 
 const CARDIO_TYPES = [
   "Treadmill",
@@ -449,7 +430,7 @@ export default function WorkoutTracker() {
       name: ex.name,
       sets: ex.sets.map(s => type === "cardio"
         ? { id: crypto.randomUUID(), speed: String(s.speed), time: String(s.time) }
-        : { id: crypto.randomUUID(), reps: String(s.reps), weight: String(fmtWeight(s.weight, weightUnit)) }),
+        : { id: crypto.randomUUID(), reps: String(s.reps), weight: String(fmtWeight(s.weight, weightUnit)), isWarmup: !!s.isWarmup }),
     })));
     setExerciseInput("");
     setActiveOrigin("detail");
@@ -528,20 +509,34 @@ export default function WorkoutTracker() {
   }
 
   function addSet(exId) {
-    const newSet = workoutType === "cardio"
-      ? { id: crypto.randomUUID(), speed: "", time: "" }
-      : { id: crypto.randomUUID(), reps: "", weight: "" };
-    setActiveExercises(activeExercises.map(ex =>
-      ex.id === exId
-        ? { ...ex, sets: [...ex.sets, newSet] }
-        : ex
-    ));
+    setActiveExercises(activeExercises.map(ex => {
+      if (ex.id !== exId) return ex;
+      // Strength sets pre-fill from this exercise's own previous set, so
+      // repeating the same weight/reps across sets needs no retyping.
+      // Cardio intervals stay blank since speed/time is more likely to vary.
+      const last = ex.sets[ex.sets.length - 1];
+      // The first set of each exercise defaults to a warmup (excluded from
+      // e1RM) since that's almost always what it is; every set after that
+      // defaults to a working set but stays user-toggleable either way.
+      const newSet = workoutType === "cardio"
+        ? { id: crypto.randomUUID(), speed: "", time: "" }
+        : { id: crypto.randomUUID(), reps: last?.reps ?? "", weight: last?.weight ?? "", isWarmup: ex.sets.length === 0 };
+      return { ...ex, sets: [...ex.sets, newSet] };
+    }));
   }
 
   function updateSet(exId, setId, field, value) {
     setActiveExercises(activeExercises.map(ex =>
       ex.id === exId
         ? { ...ex, sets: ex.sets.map(s => s.id === setId ? { ...s, [field]: value } : s) }
+        : ex
+    ));
+  }
+
+  function toggleWarmup(exId, setId) {
+    setActiveExercises(activeExercises.map(ex =>
+      ex.id === exId
+        ? { ...ex, sets: ex.sets.map(s => s.id === setId ? { ...s, isWarmup: !s.isWarmup } : s) }
         : ex
     ));
   }
@@ -880,6 +875,7 @@ export default function WorkoutTracker() {
             addSet={addSet}
             updateSet={updateSet}
             removeSet={removeSet}
+            toggleWarmup={toggleWarmup}
             removeExercise={removeExercise}
             finishWorkout={finishWorkout}
             isEditing={!!editingWorkoutId}
@@ -1096,14 +1092,14 @@ function ConfirmDeleteModal({ message, onCancel, onConfirm }) {
 
 function ExercisePickerModal({ onSelect, onClose }) {
   const [query, setQuery] = useState("");
-  const q = query.trim().toLowerCase();
-  const results = q
-    ? EXERCISE_LIBRARY.filter(name => name.toLowerCase().startsWith(q))
-    : EXERCISE_LIBRARY;
+  const results = fuzzySearch(EXERCISE_LIBRARY, query);
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/70 backdrop-fade-in flex items-end justify-center">
-      <div className="w-full max-w-md max-h-[80vh] bg-neutral-50 dark:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-800 rounded-t-xl flex flex-col">
+      {/* Fixed (not max-) height: the sheet must not shrink to fit a short
+          filtered list, or being bottom-anchored it would drag the search
+          box down toward the bottom of the screen as results narrow. */}
+      <div className="w-full max-w-md h-[80vh] bg-neutral-50 dark:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-800 rounded-t-xl flex flex-col">
         <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 dark:border-neutral-800 shrink-0">
           <span className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Exercise Library</span>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500 dark:text-neutral-400" aria-label="Close">
@@ -1701,7 +1697,36 @@ function CustomTitleView({ value, onChange, onConfirm, placeholder }) {
   );
 }
 
-function ActiveWorkout({ exercises, onOpenLibrary, onOpenCustom, addSet, updateSet, removeSet, removeExercise, finishWorkout, isEditing, weightUnit, workoutTitle, setWorkoutTitle }) {
+// The yellow dot that marks a set as a warmup (excluded from e1RM). Pass
+// onToggle to make it an interactive toggle during live entry; omit it for
+// read-only display in past-workout views.
+function WarmupDot({ isWarmup, onToggle }) {
+  const dot = (
+    <span
+      className={`block w-2 h-2 rounded-full shrink-0 ${isWarmup ? "bg-amber-400" : "bg-neutral-300 dark:bg-neutral-700"}`}
+    />
+  );
+  if (!onToggle) {
+    return (
+      <span className="inline-flex items-center" title={isWarmup ? "Warmup set" : undefined}>
+        {dot}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="p-1 -m-1"
+      title={isWarmup ? "Warmup set — tap to mark as a working set" : "Working set — tap to mark as a warmup"}
+      aria-label={isWarmup ? "Warmup set, tap to mark as a working set" : "Mark as a warmup set"}
+    >
+      {dot}
+    </button>
+  );
+}
+
+function ActiveWorkout({ exercises, onOpenLibrary, onOpenCustom, addSet, updateSet, removeSet, toggleWarmup, removeExercise, finishWorkout, isEditing, weightUnit, workoutTitle, setWorkoutTitle }) {
   return (
     <div className="space-y-4 pb-4">
       {isEditing && (
@@ -1728,6 +1753,12 @@ function ActiveWorkout({ exercises, onOpenLibrary, onOpenCustom, addSet, updateS
         </button>
       </div>
 
+      {exercises.some(ex => ex.sets.length > 0) && (
+        <p className="flex items-center gap-1.5 text-[11px] text-neutral-500 dark:text-neutral-500">
+          <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" /> = warmup set, excluded from e1RM — tap a set's dot to toggle
+        </p>
+      )}
+
       {exercises.map(ex => (
         <div key={ex.id} className="bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg p-3">
           <div className="flex items-center justify-between mb-2">
@@ -1741,7 +1772,8 @@ function ActiveWorkout({ exercises, onOpenLibrary, onOpenCustom, addSet, updateS
             <div className="space-y-1.5 mb-2">
               {ex.sets.map((s, i) => (
                 <div key={s.id} className="flex items-center gap-2">
-                  <span className="text-xs text-neutral-600 dark:text-neutral-500 w-4">{i + 1}</span>
+                  <WarmupDot isWarmup={s.isWarmup} onToggle={() => toggleWarmup(ex.id, s.id)} />
+                  <span className={`text-xs w-4 ${s.isWarmup ? "text-amber-600 dark:text-amber-400 font-medium" : "text-neutral-600 dark:text-neutral-500"}`}>{i + 1}</span>
                   <input
                     type="number"
                     inputMode="decimal"
@@ -2082,7 +2114,8 @@ function DetailView({ workout, onEdit, onDelete, weightUnit }) {
           <div className="space-y-1">
             {ex.sets.map((s, j) => (
               <div key={j} className="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-                <span className="text-xs text-neutral-400 dark:text-neutral-600 w-4">{j + 1}</span>
+                {!isCardio && <WarmupDot isWarmup={s.isWarmup} />}
+                <span className={`text-xs w-4 ${!isCardio && s.isWarmup ? "text-amber-600 dark:text-amber-400 font-medium" : "text-neutral-400 dark:text-neutral-600"}`}>{j + 1}</span>
                 {isCardio
                   ? <span>Speed {s.speed} · {s.time} min</span>
                   : <span>{fmtWeight(s.weight, weightUnit)} {weightUnit} × {s.reps} reps</span>}
@@ -2173,8 +2206,7 @@ function SearchView({ workouts, onSelectExercise }) {
   }
   const allExercises = Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
 
-  const q = query.trim().toLowerCase();
-  const filtered = q ? allExercises.filter(e => e.name.toLowerCase().includes(q)) : allExercises;
+  const filtered = fuzzySearch(allExercises, query, { keys: ["name"] });
 
   return (
     <div className="space-y-3">
@@ -2237,7 +2269,8 @@ function ExerciseHistoryView({ entries, onSelectEntry, onOpenStats, use24h, weig
           </div>
           <div className="mt-1.5 space-y-0.5">
             {entry.sets.map((s, j) => (
-              <p key={j} className="text-xs text-neutral-500 dark:text-neutral-400">
+              <p key={j} className="flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400">
+                {entry.type !== "cardio" && <WarmupDot isWarmup={s.isWarmup} />}
                 {entry.type === "cardio" ? `Speed ${s.speed} · ${s.time} min` : `${fmtWeight(s.weight, weightUnit)} ${weightUnit} × ${s.reps} reps`}
               </p>
             ))}

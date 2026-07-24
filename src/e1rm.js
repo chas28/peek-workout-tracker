@@ -46,6 +46,7 @@ export function getE1RMTrend(entries, formula = FORMULAS.EPLEY) {
   for (const entry of entries) {
     let best = null;
     for (const s of entry.sets) {
+      if (s.isWarmup) continue; // warmup sets don't reflect true strength, so they're excluded from e1RM
       const val = calculateE1RM(s.weight, s.reps, formula);
       if (val !== null && (best === null || val > best)) best = val;
     }
@@ -66,6 +67,7 @@ export function getE1RMPerSet(entries, formula = FORMULAS.EPLEY) {
 
   for (const entry of entries) {
     entry.sets.forEach((s, setIndex) => {
+      if (s.isWarmup) return; // warmup sets don't reflect true strength, so they're excluded from e1RM
       const val = calculateE1RM(s.weight, s.reps, formula);
       if (val !== null) {
         rows.push({

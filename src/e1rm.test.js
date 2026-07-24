@@ -78,6 +78,23 @@ describe("getE1RMTrend", () => {
     const dates = trend.map(p => p.date);
     expect(dates).toEqual(["2026-07-01", "2026-07-05"]);
   });
+
+  it("excludes warmup sets from the session's best e1RM", () => {
+    const withWarmup = [
+      { workoutId: "d", date: "2026-07-15", time: "2026-07-15T09:00:00.000Z", sets: [{ weight: 200, reps: 5, isWarmup: true }, { weight: 150, reps: 5, isWarmup: false }] },
+    ];
+    const trend = getE1RMTrend(withWarmup, "epley");
+    // The heavier 200lb set is marked warmup, so the working 150lb set should win despite being lighter.
+    expect(trend[0].e1rm).toBeCloseTo(calculateE1RM(150, 5, "epley"), 6);
+  });
+
+  it("omits a session entirely if its only valid set is a warmup", () => {
+    const onlyWarmup = [
+      { workoutId: "e", date: "2026-07-16", time: "2026-07-16T09:00:00.000Z", sets: [{ weight: 100, reps: 5, isWarmup: true }] },
+    ];
+    const trend = getE1RMTrend(onlyWarmup, "epley");
+    expect(trend).toHaveLength(0);
+  });
 });
 
 describe("getE1RMPerSet", () => {
@@ -103,5 +120,14 @@ describe("getE1RMPerSet", () => {
     const row = rows.find(r => r.workoutId === "b");
     expect(row.weight).toBe(110);
     expect(row.reps).toBe(1);
+  });
+
+  it("excludes warmup sets even when otherwise valid", () => {
+    const withWarmup = [
+      { workoutId: "f", date: "2026-07-16", time: "2026-07-16T09:00:00.000Z", sets: [{ weight: 100, reps: 5, isWarmup: true }, { weight: 150, reps: 5, isWarmup: false }] },
+    ];
+    const rows = getE1RMPerSet(withWarmup, "epley");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].weight).toBe(150);
   });
 });
